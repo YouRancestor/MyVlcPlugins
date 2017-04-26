@@ -45,6 +45,7 @@ static int rtp_packetize_mp4a (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_mp4a_latm (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_h263 (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_h264 (sout_stream_id_sys_t *, block_t *);
+static int rtp_packetize_h265 (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_amr  (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_spx  (sout_stream_id_sys_t *, block_t *);
 static int rtp_packetize_t140 (sout_stream_id_sys_t *, block_t *);
@@ -359,6 +360,11 @@ int rtp_get_fmt( vlc_object_t *obj, es_format_t *p_fmt, const char *mux,
                 rtp_fmt->fmtp = strdup( "packetization-mode=1" );
             break;
 
+        case VLC_CODEC_HEVC:
+            rtp_fmt->ptname = "H265";
+            rtp_fmt->pf_packetize = rtp_packetize_h265;
+            break;
+
         case VLC_CODEC_MP4V:
         {
             rtp_fmt->ptname = "MP4V-ES";
@@ -379,7 +385,7 @@ int rtp_get_fmt( vlc_object_t *obj, es_format_t *p_fmt, const char *mux,
             {
                 char hexa[2*p_fmt->i_extra +1];
 
-                rtp_fmt->ptname = "mpeg4-generic";
+                rtp_fmt->ptname = "MPEG4-GENERIC";
                 rtp_fmt->pf_packetize = rtp_packetize_mp4a;
                 sprintf_hexa( hexa, p_fmt->p_extra, p_fmt->i_extra );
                 if( asprintf( &rtp_fmt->fmtp,
@@ -1156,6 +1162,85 @@ rtp_packetize_h264_nal( sout_stream_id_sys_t *id,
     return VLC_SUCCESS;
 }
 
+static int
+rtp_packetize_h265_nal( sout_stream_id_sys_t *id,
+                        const uint8_t *p_data, int i_data, int64_t i_pts,
+                        int64_t i_dts, bool b_last, int64_t i_length )
+{
+    const int i_max = rtp_mtu (id); /* payload max in one packet */
+
+    int i_nal_hdr;/*  */
+    int i_nal_hdr2;/* 保存payload 未使用的位置 1 以后备用*/
+    int i_nal_type;
+
+    if( i_data < 5 )
+        return VLC_SUCCESS;
+
+    i_nal_hdr = p_data[3];
+    i_nal_hdr2 = p_data[4];
+    i_nal_type = (i_nal_hdr>>1) & 0x3F;
+
+    /* Skip start code */
+    p_data += 3;
+    i_data -= 3;
+
+    /* */
+    if( i_data <= i_max )
+    {
+        /* Single NAL unit packet */
+        block_t *out = block_Alloc( 12 + i_data );
+        out->i_dts    = i_dts;
+        out->i_length = i_length;
+
+        /* */
+        rtp_packetize_common( id, out, b_last, i_pts );
+        out->i_buffer = 12 + i_data;
+
+        memcpy( &out->p_buffer[12], p_data, i_data );
+
+        rtp_packetize_send( id, out );
+    }
+    else
+    {
+        /* FU-A Fragmentation Unit without interleaving */
+        const int i_count = ( i_data-1 + i_max-2 - 1 ) / (i_max-2);
+        int i;
+
+                /*当是分组的第一报数据时，应该覆盖掉前两个字节的数据，
+                h264要覆盖前一个字节的数据，即是第一包要去除hevc帧数据的paylaodhdr
+                */
+        p_data+=2;
+        i_data-=2;
+
+        for( i = 0; i < i_count; i++ )
+        {
+            const int i_payload = __MIN( i_data, i_max-2 );
+            block_t *out = block_Alloc( 12 + 3 + i_payload );
+            out->i_dts    = i_dts + i * i_length / i_count;
+            out->i_length = i_length / i_count;
+
+            /* */
+            rtp_packetize_common( id, out, (b_last && i_payload == i_data),
+                                    i_pts );
+            out->i_buffer = 15 + i_payload;
+
+            /* payload header */
+            out->p_buffer[12] = (i_nal_hdr & 0x81) | (49 << 1);
+            out->p_buffer[13] = i_nal_hdr2;
+            /* FU header */
+            //第一包S位设置1  最后一包E位设置为1
+            out->p_buffer[14] = ( i == 0 ? 0x80 : 0x00 ) | ( (i == i_count-1) ? 0x40 : 0x00 )  | i_nal_type;
+            memcpy( &out->p_buffer[15], p_data, i_payload );
+
+            rtp_packetize_send( id, out );
+
+            i_data -= i_payload;
+            p_data += i_payload;
+        }
+    }
+    return VLC_SUCCESS;
+}
+
 static int rtp_packetize_h264( sout_stream_id_sys_t *id, block_t *in )
 {
     const uint8_t *p_buffer = in->p_buffer;
@@ -1187,6 +1272,48 @@ static int rtp_packetize_h264( sout_stream_id_sys_t *id, block_t *in )
         }
         /* TODO add STAP-A to remove a lot of overhead with small slice/sei/... */
         rtp_packetize_h264_nal( id, p_buffer, i_size,
+                (in->i_pts > VLC_TS_INVALID ? in->i_pts : in->i_dts), in->i_dts,
+                (i_size >= i_buffer), in->i_length * i_size / in->i_buffer );
+
+        i_buffer -= i_skip;
+        p_buffer += i_skip;
+    }
+
+    block_Release(in);
+    return VLC_SUCCESS;
+}
+
+static int rtp_packetize_h265( sout_stream_id_sys_t *id, block_t *in )
+{
+    const uint8_t *p_buffer = in->p_buffer;
+    int i_buffer = in->i_buffer;
+
+    while( i_buffer > 4 && ( p_buffer[0] != 0 || p_buffer[1] != 0 || p_buffer[2] != 1 ) )
+    {
+        i_buffer--;
+        p_buffer++;
+    }
+
+    /* Split nal units */
+    while( i_buffer > 4 )
+    {
+        int i_offset;
+        int i_size = i_buffer;
+        int i_skip = i_buffer;
+
+        /* search nal end */
+        for( i_offset = 4; i_offset+2 < i_buffer ; i_offset++)
+        {
+            if( p_buffer[i_offset] == 0 && p_buffer[i_offset+1] == 0 && p_buffer[i_offset+2] == 1 )
+            {
+                /* we found another startcode */
+                i_size = i_offset - ( p_buffer[i_offset-1] == 0 ? 1 : 0);
+                i_skip = i_offset;
+                break;
+            }
+        }
+        /* TODO add STAP-A to remove a lot of overhead with small slice/sei/... */
+        rtp_packetize_h265_nal( id, p_buffer, i_size,
                 (in->i_pts > VLC_TS_INVALID ? in->i_pts : in->i_dts), in->i_dts,
                 (i_size >= i_buffer), in->i_length * i_size / in->i_buffer );
 
@@ -1304,11 +1431,11 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
     }
 
     /*
-      RFC for Speex in RTP says that each packet must end on an octet
+      RFC for Speex in RTP says that each packet must end on an octet 
       boundary. So, we check to see if the number of bytes % 4 is zero.
-      If not, we have to add some padding.
+      If not, we have to add some padding. 
 
-      This MAY be overkill since packetization is handled elsewhere and
+      This MAY be overkill since packetization is handled elsewhere and 
       appears to ensure the octet boundary. However, better safe than
       sorry.
     */
@@ -1319,8 +1446,8 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
     }
 
     /*
-      Allocate a new RTP p_output block of the appropriate size.
-      Allow for 12 extra bytes of RTP header.
+      Allocate a new RTP p_output block of the appropriate size. 
+      Allow for 12 extra bytes of RTP header. 
     */
     p_out = block_Alloc( 12 + i_payload_size );
 
@@ -1338,15 +1465,15 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
           of the expected RTP header added during
           rtp_packetize_common.
         */
-        p_out->p_buffer[12 + i_data_size] = c_first_pad;
+        p_out->p_buffer[12 + i_data_size] = c_first_pad; 
         switch (i_payload_padding)
         {
           case 2:
-            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad;
+            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad; 
             break;
           case 3:
-            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad;
-            p_out->p_buffer[12 + i_data_size + 2] = c_remaining_pad;
+            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad; 
+            p_out->p_buffer[12 + i_data_size + 2] = c_remaining_pad; 
             break;
         }
     }
