@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-
+//#include<config.h>//##@@
 typedef struct rtsp_stream_t rtsp_stream_t;
 typedef struct rtsp_stream_id_t rtsp_stream_id_t;
 
@@ -47,6 +47,7 @@ char *SDPGenerateVoD( const vod_media_t *p_media, const char *rtsp_url );
 char *SDPGenerateVoD2( const vod_media_t *p_media, const char *rtsp_url,const char *session_id );
 uint32_t rtp_compute_ts( unsigned i_clock_rate, int64_t i_pts );
 int rtp_add_sink( sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq );
+int rtp_add_sink_tcp(sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq , char i_channel);//@@##
 void rtp_del_sink( sout_stream_id_sys_t *id, int fd );
 uint16_t rtp_get_seq( sout_stream_id_sys_t *id );
 int64_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t *id,
@@ -65,6 +66,8 @@ int rtp_packetize_xiph_config( sout_stream_id_sys_t *id, const char *fmtp,
 /* RTCP */
 typedef struct rtcp_sender_t rtcp_sender_t;
 rtcp_sender_t *OpenRTCP (vlc_object_t *obj, int rtp_fd, int proto,
+                         bool mux);
+rtcp_sender_t *OpenRTCP_tcp (vlc_object_t *obj, int rtp_fd, int proto,
                          bool mux);
 void CloseRTCP (rtcp_sender_t *rtcp);
 void SendRTCP (rtcp_sender_t *restrict rtcp, const block_t *rtp);
@@ -85,6 +88,13 @@ typedef struct rtp_format_t
     /* Used for packetization only */
     pf_rtp_packetizer_t pf_packetize;
 } rtp_format_t;
+
+typedef struct over_tcp_t
+{
+    bool b_over_tcp;
+    char channel;
+
+}over_tcp_t;
 
 int rtp_get_fmt( vlc_object_t *obj, es_format_t *p_fmt, const char *mux,
                  rtp_format_t *p_rtp_fmt );
@@ -107,3 +117,4 @@ int vod_init_id(vod_media_t *p_media, const char *psz_session, int es_id,
 void vod_detach_id(vod_media_t *p_media, const char *psz_session,
                    sout_stream_id_sys_t *sout_id);
 
+int RtspGetOvertcp(rtsp_stream_t *rtsp, char* psz_session, over_tcp_t *over_tcp);

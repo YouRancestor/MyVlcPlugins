@@ -385,7 +385,7 @@ int rtp_get_fmt( vlc_object_t *obj, es_format_t *p_fmt, const char *mux,
             {
                 char hexa[2*p_fmt->i_extra +1];
 
-                rtp_fmt->ptname = "MPEG4-GENERIC";
+                rtp_fmt->ptname = "mpeg4-generic";
                 rtp_fmt->pf_packetize = rtp_packetize_mp4a;
                 sprintf_hexa( hexa, p_fmt->p_extra, p_fmt->i_extra );
                 if( asprintf( &rtp_fmt->fmtp,
@@ -1431,11 +1431,11 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
     }
 
     /*
-      RFC for Speex in RTP says that each packet must end on an octet 
+      RFC for Speex in RTP says that each packet must end on an octet
       boundary. So, we check to see if the number of bytes % 4 is zero.
-      If not, we have to add some padding. 
+      If not, we have to add some padding.
 
-      This MAY be overkill since packetization is handled elsewhere and 
+      This MAY be overkill since packetization is handled elsewhere and
       appears to ensure the octet boundary. However, better safe than
       sorry.
     */
@@ -1446,8 +1446,8 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
     }
 
     /*
-      Allocate a new RTP p_output block of the appropriate size. 
-      Allow for 12 extra bytes of RTP header. 
+      Allocate a new RTP p_output block of the appropriate size.
+      Allow for 12 extra bytes of RTP header.
     */
     p_out = block_Alloc( 12 + i_payload_size );
 
@@ -1465,15 +1465,15 @@ static int rtp_packetize_spx( sout_stream_id_sys_t *id, block_t *in )
           of the expected RTP header added during
           rtp_packetize_common.
         */
-        p_out->p_buffer[12 + i_data_size] = c_first_pad; 
+        p_out->p_buffer[12 + i_data_size] = c_first_pad;
         switch (i_payload_padding)
         {
           case 2:
-            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad; 
+            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad;
             break;
           case 3:
-            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad; 
-            p_out->p_buffer[12 + i_data_size + 2] = c_remaining_pad; 
+            p_out->p_buffer[12 + i_data_size + 1] = c_remaining_pad;
+            p_out->p_buffer[12 + i_data_size + 2] = c_remaining_pad;
             break;
         }
     }

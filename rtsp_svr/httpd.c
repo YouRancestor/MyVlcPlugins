@@ -46,8 +46,6 @@
 #include <errno.h>
 #include <unistd.h>
 
-#include "vlc_fixups.h"
-
 #ifdef HAVE_POLL
 # include <poll.h>
 #endif
@@ -1820,7 +1818,7 @@ static void httpdLoop(httpd_host_t *host)
                         answer->i_body = 0;
                         answer->p_body = NULL;
 
-                        httpd_MsgAdd(answer, "Server", "VLC/%s", "2.2.0-git");
+                        httpd_MsgAdd(answer, "Server", "VLC/%s", VERSION);
                         httpd_MsgAdd(answer, "Content-Length", "0");
 
                         switch(query->i_proto) {
