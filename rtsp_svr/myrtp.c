@@ -293,6 +293,8 @@ static const char *const ppsz_sout_options[] = {
     "mp4a-latm", NULL
 };
 
+extern over_tcp_t s1;
+
 static sout_stream_id_sys_t *Add ( sout_stream_t *, es_format_t * );
 static int               Del ( sout_stream_t *, sout_stream_id_sys_t * );
 static int               Send( sout_stream_t *, sout_stream_id_sys_t *,
@@ -1484,14 +1486,14 @@ static void* ThreadSend( void *data )
             block_t *p_tmp = NULL;
 
             p_tmp = block_Alloc(out->i_buffer+4);
-            if(-1==id->over_tcp.channel/*s1.channel*/)
+            if(-1==id->over_tcp.channel)
             {
                 msg_Dbg( id->p_stream, "wrong channel, ThreadSend quit." );
                 break;
             }
             uint8_t * p_bk = p_tmp->p_buffer;
             *p_bk = '$'; // 0x24
-            *++p_bk=id->over_tcp.channel /*s1.channel*/;
+            ++p_bk;
             uint16_t i_len = out->i_buffer;
             memcpy(++p_bk,((uint8_t*)&i_len)+1,1);
             memcpy(++p_bk,&i_len,1);
@@ -1507,27 +1509,10 @@ static void* ThreadSend( void *data )
 
         for( int i = 0; i < id->sinkc; i++ )
         {
-            if(id->sinkv[i].b_over_tcp/*s1.b_over_tcp*/)
+            if(id->sinkv[i].b_over_tcp)
             {
                 out = p_tcp;
-                *(out->p_buffer+1)=id->sinkv[i].i_channel;
-//            	block_t *p_tmp = NULL;
-//            	p_tmp = block_Alloc(out->i_buffer+4);
-//                if(-1==id->over_tcp.channel/*s1.channel*/)
-//                {
-//                    msg_Dbg( id->p_stream, "wrong channel, ThreadSend quit." );
-//                    break;
-//                }
-//                uint8_t * p_bk = p_tmp->p_buffer;
-//                *p_bk = '$'; // 0x24
-//                *++p_bk=id->over_tcp.channel /*s1.channel*/;
-//                uint16_t i_len = out->i_buffer;
-//                memcpy(++p_bk,((uint8_t*)&i_len)+1,1);
-//                memcpy(++p_bk,&i_len,1);
-//                p_bk+=1;
-//                memcpy(p_bk,out->p_buffer,i_len);
-//                block_Release(out);
-//                out=p_tmp;
+                *(p_tcp->p_buffer+1) = id->sinkv[i].i_channel*2;
             }
             else
             {
@@ -1539,7 +1524,6 @@ static void* ThreadSend( void *data )
             if( !id->srtp ) /* FIXME: SRTCP support */
 #endif
                 SendRTCP( id->sinkv[i].rtcp, out );
-//msg_Dbg( id->p_stream, "@@## is writing");
             if( send( id->sinkv[i].rtp_fd, out->p_buffer, out->i_buffer, 0 ) == -1
              && net_errno != EAGAIN && net_errno != EWOULDBLOCK
              && net_errno != ENOBUFS && net_errno != ENOMEM )

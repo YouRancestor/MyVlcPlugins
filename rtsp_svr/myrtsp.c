@@ -681,13 +681,6 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                         const httpd_message_t *query )
 {
     int i=0;
-    //msg_Dbg(rtsp->owner,"@@##:");
-//    for(i=0;i<query->i_headers;i++)
-//    {
-//        msg_Dbg(rtsp->owner, "name:[%s],value:[%s]",query->p_headers[i].name, query->p_headers[i].value);
-//    }
-    //msg_Dbg(rtsp->owner, "status:%d\nquery body:[%s]",query->i_status, query->p_body );
-    //msg_Dbg(rtsp->owner,"@@##");
     bool b_is_tcp = 0;//@@##
     int i_interleaved;
 
@@ -834,10 +827,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             }
 
             psz_session = httpd_MsgGet( query, "Session" );
-//            if(psz_session == NULL)
-//            {
-//                //psz_session = psz_urlArgs;
-//            }
+
             answer->i_status = 461;
 
             for( const char *tpt = httpd_MsgGet( query, "Transport" );
@@ -977,11 +967,6 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     else
                     {
                         fd = cl->fd;
-//                        ses->over_tcp.b_over_tcp = b_is_tcp;
-//                        ses->over_tcp.channel = i_interleaved;
-
-//                        s1.b_over_tcp = b_is_tcp;
-//                        s1.channel = i_interleaved;
                     }
 
                     if( fd == -1 )
@@ -1223,7 +1208,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                                 }
                                 else
                                 {
-                                    rtp_add_sink_tcp(tr->sout_id, tr->rtp_fd, false, &seq,tr->id->track_id);
+                                    rtp_add_sink_tcp(tr->sout_id, tr->rtp_fd, false, &seq,i);
                                 }
 
 
