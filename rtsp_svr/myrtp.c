@@ -69,6 +69,24 @@
 #include <errno.h>
 #include <assert.h>
 
+
+typedef struct media_es_t media_es_t;
+struct vod_media_t
+{
+    /* VoD server */
+    vod_t *p_vod;
+
+    /* RTSP server */
+    rtsp_stream_t *rtsp;
+
+    /* ES list */
+    int        i_es;
+    media_es_t **es;
+    const char *psz_mux;
+
+    /* Infos */
+    mtime_t i_length;
+};
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -275,6 +293,8 @@ static const char *const ppsz_sout_options[] = {
     "mp4a-latm", NULL
 };
 
+extern over_tcp_t s1;
+
 static sout_stream_id_sys_t *Add ( sout_stream_t *, es_format_t * );
 static int               Del ( sout_stream_t *, sout_stream_id_sys_t * );
 static int               Send( sout_stream_t *, sout_stream_id_sys_t *,
@@ -351,10 +371,13 @@ typedef struct rtp_sink_t
 {
     int rtp_fd;
     rtcp_sender_t *rtcp;
+    bool b_over_tcp;
+    char i_channel;
 } rtp_sink_t;
 
 struct sout_stream_id_sys_t
 {
+    over_tcp_t over_tcp;
     sout_stream_t *p_stream;
     /* rtp field */
     uint16_t    i_sequence;
@@ -404,6 +427,7 @@ static int Open( vlc_object_t *p_this )
 
     config_ChainParse( p_stream, SOUT_CFG_PREFIX,
                        ppsz_sout_options, p_stream->p_cfg );
+
 
     p_sys = malloc( sizeof( sout_stream_sys_t ) );
     if( p_sys == NULL )
@@ -964,7 +988,20 @@ static sout_stream_id_sys_t *Add( sout_stream_t *p_stream, es_format_t *p_fmt )
     sout_stream_id_sys_t *id = malloc( sizeof( *id ) );
     if( unlikely(id == NULL) )
         return NULL;
+    id->over_tcp.b_over_tcp = false;
+    id->over_tcp.channel = 0;
     id->p_stream   = p_stream;
+
+    if(0)
+    if(p_fmt !=NULL)
+    {
+        RtspGetOvertcp(p_sys->p_vod_media->rtsp,p_sys->psz_vod_session,&(id->over_tcp.b_over_tcp));
+//        if(id->over_tcp.b_over_tcp == true)
+//            if(p_fmt->i_id == 0)
+//                id->over_tcp.channel = 2;
+//            else
+//                id->over_tcp.channel = 0;
+    }
 
     id->i_mtu = var_InheritInteger( p_stream, "mtu" );
     if( id->i_mtu <= 12 + 16 )
@@ -1442,18 +1479,52 @@ static void* ThreadSend( void *data )
         ssize_t len = out->i_buffer;
         int canc = vlc_savecancel ();
 
+        block_t *p_udp = out;
+        block_t* p_tcp = NULL;
+
+        {
+            block_t *p_tmp = NULL;
+
+            p_tmp = block_Alloc(out->i_buffer+4);
+            if(-1==id->over_tcp.channel)
+            {
+                msg_Dbg( id->p_stream, "wrong channel, ThreadSend quit." );
+                break;
+            }
+            uint8_t * p_bk = p_tmp->p_buffer;
+            *p_bk = '$'; // 0x24
+            ++p_bk;
+            uint16_t i_len = out->i_buffer;
+            memcpy(++p_bk,((uint8_t*)&i_len)+1,1);
+            memcpy(++p_bk,&i_len,1);
+            p_bk+=1;
+            memcpy(p_bk,out->p_buffer,i_len);
+            p_tcp = p_tmp;
+        }
+
+
         vlc_mutex_lock( &id->lock_sink );
         unsigned deadc = 0; /* How many dead sockets? */
         int deadv[id->sinkc]; /* Dead sockets list */
 
         for( int i = 0; i < id->sinkc; i++ )
         {
+            if(id->sinkv[i].b_over_tcp)
+            {
+                out = p_tcp;
+                *(p_tcp->p_buffer+1) = id->sinkv[i].i_channel*2;
+            }
+            else
+            {
+                out = p_udp;
+            }
+
+
 #ifdef HAVE_SRTP
             if( !id->srtp ) /* FIXME: SRTCP support */
 #endif
                 SendRTCP( id->sinkv[i].rtcp, out );
-
-            if( send( id->sinkv[i].rtp_fd, out->p_buffer, len, 0 ) == -1
+            if( send( id->sinkv[i].rtp_fd, out->p_buffer, out->i_buffer, 0 ) == -1
              && net_errno != EAGAIN && net_errno != EWOULDBLOCK
              && net_errno != ENOBUFS && net_errno != ENOMEM )
             {
@@ -1462,7 +1533,7 @@ static void* ThreadSend( void *data )
                             &type, &(socklen_t){ sizeof(type) });
                 if( type == SOCK_DGRAM )
                     /* ICMP soft error: ignore and retry */
-                    send( id->sinkv[i].rtp_fd, out->p_buffer, len, 0 );
+                    send( id->sinkv[i].rtp_fd, out->p_buffer, out->i_buffer, 0 );
                 else
                     /* Broken connection */
                     deadv[deadc++] = id->sinkv[i].rtp_fd;
@@ -1470,7 +1541,8 @@ static void* ThreadSend( void *data )
         }
         id->i_seq_sent_next = ntohs(((uint16_t *) out->p_buffer)[1]) + 1;
         vlc_mutex_unlock( &id->lock_sink );
-        block_Release( out );
+        block_Release( p_tcp );
+        block_Release( p_udp );
 
         for( unsigned i = 0; i < deadc; i++ )
         {
@@ -1506,7 +1578,7 @@ static void *rtp_listen_thread( void *data )
 
 int rtp_add_sink( sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq )
 {
-    rtp_sink_t sink = { fd, NULL };
+    rtp_sink_t sink = { fd, NULL ,false,-1};
     sink.rtcp = OpenRTCP( VLC_OBJECT( id->p_stream ), fd, IPPROTO_UDP,
                           rtcp_mux );
     if( sink.rtcp == NULL )
@@ -1519,7 +1591,21 @@ int rtp_add_sink( sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq
     vlc_mutex_unlock( &id->lock_sink );
     return VLC_SUCCESS;
 }
+int rtp_add_sink_tcp( sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq ,char i_channel)
+{
+    rtp_sink_t sink = { fd, NULL ,true, i_channel};
+    sink.rtcp = OpenRTCP_tcp( VLC_OBJECT( id->p_stream ), fd, IPPROTO_TCP,
+                          rtcp_mux );
+    if( sink.rtcp == NULL )
+        msg_Err( id->p_stream, "RTCP failed!" );
 
+    vlc_mutex_lock( &id->lock_sink );
+    INSERT_ELEM( id->sinkv, id->sinkc, id->sinkc, sink );
+    if( seq != NULL )
+        *seq = id->i_seq_sent_next;
+    vlc_mutex_unlock( &id->lock_sink );
+    return VLC_SUCCESS;
+}
 void rtp_del_sink( sout_stream_id_sys_t *id, int fd )
 {
     rtp_sink_t sink = { fd, NULL };

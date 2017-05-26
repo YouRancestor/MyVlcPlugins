@@ -63,6 +63,45 @@
 //void httpd_MsgAdd(httpd_message_t *msg, const char *name, const char *psz_value, ...);//##$$
 typedef struct rtsp_session_t rtsp_session_t;
 
+over_tcp_t s1;
+
+
+
+//@@##
+typedef struct vlc_tls_t vlc_tls_t;
+struct httpd_client_t
+{
+    httpd_url_t *url;
+
+    int     i_ref;
+
+    int     fd;
+
+    bool    b_stream_mode;
+    uint8_t i_state;
+
+    mtime_t i_activity_date;
+    mtime_t i_activity_timeout;
+
+    /* buffer for reading header */
+    int     i_buffer_size;
+    int     i_buffer;
+    uint8_t *p_buffer;
+
+    /*
+     * If waiting for a keyframe, this is the position (in bytes) of the
+     * last keyframe the stream saw before this client connected.
+     * Otherwise, -1.
+     */
+    int64_t i_keyframe_wait_to_pass;
+
+    /* */
+    httpd_message_t query;  /* client -> httpd */
+    httpd_message_t answer; /* httpd -> client */
+
+    /* TLS data */
+    vlc_tls_t *p_tls;
+};
 struct rtsp_stream_t
 {
     vlc_mutex_t     lock;
@@ -212,7 +251,7 @@ struct rtsp_session_t
     int            trackc;
     rtsp_strack_t *trackv;
     //@@##
-    //int64_t vlm_media_id;
+    over_tcp_t over_tcp;
 };
 
 
@@ -383,7 +422,8 @@ rtsp_session_t *RtspClientNew( rtsp_stream_t *rtsp )
     vlc_rand_bytes (&s->id, sizeof (s->id));
     s->trackc = 0;
     s->trackv = NULL;
-
+    s->over_tcp.b_over_tcp= 0;
+    s->over_tcp.channel = -1;
     TAB_APPEND( rtsp->sessionc, rtsp->sessionv, s );
 
     return s;
@@ -504,7 +544,14 @@ int RtspTrackAttach( rtsp_stream_t *rtsp, const char *name,
     if (tr->rtp_fd != -1)
     {
         uint16_t seq;
-        rtp_add_sink(tr->sout_id, tr->rtp_fd, false, &seq);
+        if(!session->over_tcp.b_over_tcp)
+        {
+             rtp_add_sink(tr->sout_id, tr->rtp_fd, false, &seq);
+        }
+        else
+        {
+            rtp_add_sink_tcp(tr->sout_id, tr->rtp_fd, false, &seq,tr->id->track_id);
+        }
         /* To avoid race conditions, sout_id->i_seq_sent_next must
          * be set here and now. Make sure the caller did its job
          * properly when passing seq_init. */
@@ -622,6 +669,7 @@ static int64_t ParseNPT (const char *str)
     return sec < 0 ? -1 : sec * CLOCK_FREQ;
 }
 
+//#include  <netinet/tcp.h>
     int aaa();
 /** RTSP requests handler
  * @param id selected track for non-aggregate URLs,
@@ -632,6 +680,10 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                         httpd_message_t *answer,
                         const httpd_message_t *query )
 {
+    int i=0;
+    bool b_is_tcp = 0;//@@##
+    int i_interleaved;
+
     vlc_object_t *owner = rtsp->owner;
     char *psz_urlArgs =(char*)(query->psz_args);//##@@
     vlm_t * p_vlm = vlm_New(owner);
@@ -745,7 +797,6 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             }
             httpd_MsgAdd( answer, "Content-Type",  "%s", "application/sdp" );
             httpd_MsgAdd( answer, "Content-Base",  "%s", control );
-
             if(psz_urlArgs != NULL)
             {
                 answer->p_body = (uint8_t *) ( vod ?
@@ -763,6 +814,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             else
                 answer->i_status = 500;
             psz_session = NULL;
+            usleep(60);
             break;
         }
 
@@ -775,10 +827,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             }
 
             psz_session = httpd_MsgGet( query, "Session" );
-            if(psz_session == NULL)
-            {
-                //psz_session = psz_urlArgs;
-            }
+
             answer->i_status = 461;
 
             for( const char *tpt = httpd_MsgGet( query, "Transport" );
@@ -794,7 +843,15 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     continue;
                 tpt += 7;
                 if( strncmp( tpt, "/UDP", 4 ) == 0 )
+                {
                     tpt += 4;
+                    b_is_tcp = 0;
+                }
+                else if( strncmp( tpt, "/TCP", 4 ) == 0 )
+                {
+                    tpt += 4;
+                    b_is_tcp = 1;
+                }
                 if( strchr( ";,", *tpt ) == NULL )
                     continue;
 
@@ -824,10 +881,16 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                         }
                     }
                     else
-                    if( strncmp( opt,"destination=", 12 ) == 0 )
+                    if( strncmp( opt,"destination=", 12 ) == 0 )//@@
                     {
                         answer->i_status = 403;
                         b_unsupp = true;
+                    }
+                    else
+                    if( strncmp( opt,"interleaved=", 12 ) == 0 )
+                    {
+                        char *tmp = strchr( opt,'=');
+                        i_interleaved = atoi(tmp+1);
                     }
                     else
                     {
@@ -881,7 +944,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                                   "ttl=%d;mode=play",
                                   dst, dport, dport + 1, ttl );
                      /* FIXME: this doesn't work with RTP + RTCP mux */
-                    msg_Dbg(rtsp->owner, "@@## Transport %u",dport );
+                    //msg_Dbg(rtsp->owner, "@@## Transport %u",dport );
                 }
                 else
                 {
@@ -896,8 +959,16 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                         continue;
                     }
 
-                    fd = net_ConnectDgram( owner, ip, loport, -1,
-                                           IPPROTO_UDP );
+                    if(!b_is_tcp)
+                    {
+                        fd = net_ConnectDgram( owner, ip, loport, -1,
+                                               IPPROTO_UDP );
+                    }
+                    else
+                    {
+                        fd = cl->fd;
+                    }
+
                     if( fd == -1 )
                     {
                         msg_Err( owner,
@@ -910,6 +981,11 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     /* Ignore any unexpected incoming packet */
                     setsockopt (fd, SOL_SOCKET, SO_RCVBUF, &(int){ 0 },
                                 sizeof (int));
+                    setsockopt (fd, SOL_SOCKET, SO_KEEPALIVE, &(bool){ false },
+                                sizeof (int));
+                    setsockopt (fd, IPPROTO_TCP, TCP_NODELAY, &(bool){false},
+                                sizeof (int));
+
                     net_GetSockAddress( fd, src, &sport );
 
                     vlc_mutex_lock( &rtsp->lock );
@@ -932,7 +1008,16 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                         }
                     }
                     RtspClientAlive(ses);
-
+                    if(!b_is_tcp)
+                    {
+                        ses->over_tcp.b_over_tcp = false;
+                        ses->over_tcp.channel = -1;
+                    }
+                    else
+                    {
+                        ses->over_tcp.b_over_tcp = true;
+                        ses->over_tcp.channel = i_interleaved;
+                    }
                     rtsp_strack_t *tr = NULL;
                     for (int i = 0; i < ses->trackc; i++)
                     {
@@ -995,16 +1080,27 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     else
                         src[0] = '\0';
 
-                    httpd_MsgAdd( answer, "Transport",
-                                  "RTP/AVP/UDP;unicast%s%s;"
-                                  "client_port=%u-%u;server_port=%u-%u;"
-                                  "ssrc=%08X;mode=play",
-                                  src[0] ? ";source=" : "", src,
-                                  loport, loport + 1, sport, sport + 1, ssrc );
-                    msg_Dbg(rtsp->owner, "@@## client:%u   ## server:%u",loport,sport );
+                    if(!b_is_tcp)
+                    {
+                        httpd_MsgAdd( answer, "Transport",
+                                      "RTP/AVP/UDP;unicast%s%s;"
+                                      "client_port=%u-%u;server_port=%u-%u;"
+                                      "ssrc=%08X;mode=play",
+                                      src[0] ? ";source=" : "", src,
+                                      loport, loport + 1, sport, sport + 1, ssrc );
+                    }
+                    else
+                    {
+                        httpd_MsgAdd( answer, "Transport",
+                                      "RTP/AVP/TCP;unicast;"
+                                      "interleaved=%u-%u;"
+                                      "ssrc=%08X;mode=play",
+                                      i_interleaved, i_interleaved + 1, ssrc );
+                    }
+                    //msg_Dbg(rtsp->owner, "@@## client:%u   ## server:%u",loport,sport );
                     answer->i_status = 200;
-                }
 
+                }
                 break;
             }
             break;
@@ -1105,8 +1201,17 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                                 if (tr->rtp_fd == -1)
                                     continue;
 
-                                rtp_add_sink( tr->sout_id, tr->rtp_fd,
-                                              false, &seq );
+                                if(!ses->over_tcp.b_over_tcp)
+                                {
+                                    rtp_add_sink( tr->sout_id, tr->rtp_fd,
+                                                  false, &seq );
+                                }
+                                else
+                                {
+                                    rtp_add_sink_tcp(tr->sout_id, tr->rtp_fd, false, &seq,i);
+                                }
+
+
                             }
                         }
                         else
@@ -1283,8 +1388,13 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
     psz = httpd_MsgGet( query, "Timestamp" );
     if( psz != NULL )
         httpd_MsgAdd( answer, "Timestamp", "%s", psz );
-
-    msg_Dbg(rtsp->owner, "@@##[%s]@@##",answer->p_body );
+     //msg_Dbg(rtsp->owner,"@@##:");
+    for(i=0;i<answer->i_headers;i++)
+    {
+       // msg_Dbg(rtsp->owner, "name:[%s],value:[%s]@@",answer->p_headers[i].name, answer->p_headers[i].value);
+    }
+    //msg_Dbg(rtsp->owner, "status:%d :[%s]@@",answer->i_status,answer->p_body );
+    //msg_Dbg(rtsp->owner,"@@##");
     return VLC_SUCCESS;
 }
 
@@ -1307,4 +1417,12 @@ static int RtspCallbackId( httpd_callback_sys_t *p_args,
 {
     rtsp_stream_id_t *id = (rtsp_stream_id_t *)p_args;
     return RtspHandler( id->stream, id, cl, answer, query );
+}
+int RtspGetOvertcp(rtsp_stream_t *rtsp,char* psz_session,over_tcp_t *over_tcp)
+{
+    rtsp_session_t *ses;
+    ses = RtspClientGet( rtsp, psz_session );
+    over_tcp->b_over_tcp = ses->over_tcp.b_over_tcp;
+    over_tcp->channel = ses->over_tcp.channel;
+    return 0;
 }
