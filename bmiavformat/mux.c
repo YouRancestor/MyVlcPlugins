@@ -36,11 +36,13 @@
 #include <libavformat/avformat.h>
 
 #include "avformat.h"
-#include <avcodec/avcodec.h>
-#include <avcodec/avcommon.h>
+#include "avcodec.h"
+#include "avcommon.h"
 #include "xiph.h"
-#include <libavutil/mem.h>
+
+
 //#define AVFORMAT_DEBUG 1
+
 static const char *const ppsz_mux_options[] = {
     "mux", "options", NULL
 };
@@ -77,6 +79,7 @@ static int64_t IOSeek( void *opaque, int64_t offset, int whence );
  *****************************************************************************/
 int OpenMux( vlc_object_t *p_this )
 {
+    av_register_all();
     AVOutputFormat *file_oformat;
     sout_mux_t *p_mux = (sout_mux_t*)p_this;
     bool dummy = !strcmp( p_mux->p_access->psz_access, "dummy");
@@ -86,33 +89,36 @@ int OpenMux( vlc_object_t *p_this )
         return VLC_EGENERIC;
 
     vlc_init_avformat(p_this);
-    sout_mux_sys_t *p_sys = malloc( sizeof( sout_mux_sys_t ) );
-    if( unlikely(p_sys == NULL) )
-        return VLC_ENOMEM;
 
     config_ChainParse( p_mux, "sout-avformat-", ppsz_mux_options, p_mux->p_cfg );
 
     /* Find the requested muxer */
-    char *psz_mux = var_InheritString( p_mux, "sout-avformat-mux" );
+   // char *psz_mux = var_InheritString( p_mux, "sout-avformat-mux" );
+    char *psz_mux = "mpeg";
     if( psz_mux )
     {
-       // file_oformat = av_guess_format( psz_mux, NULL, NULL );
-        avformat_alloc_output_context2(&p_sys->oc,NULL,psz_mux,p_mux->p_access->psz_path);
-          free( psz_mux );
-        if (!p_sys->oc) {
-               msg_Err( p_mux,"Could not create output context \"%s\"",p_mux->p_access->psz_path);
-            }
-
+        file_oformat = av_guess_format( psz_mux, NULL, NULL );
+       // free( psz_mux );
     }
     else
     {
-        /*file_oformat =
-            av_guess_format( "mpeg", p_mux->p_access->psz_path, NULL);*/
-        avformat_alloc_output_context2(&p_sys->oc,NULL,psz_mux,p_mux->p_access->psz_path);
-        if (!p_sys->oc) {
-               msg_Err( p_mux,"Could not create output context \"%s\"",p_mux->p_access->psz_path);
-            }
+        file_oformat =
+            av_guess_format( NULL, p_mux->p_access->psz_path, NULL);
     }
+    if (!file_oformat)
+    {
+      msg_Err( p_mux, "unable for find a suitable output format" );
+      return VLC_EGENERIC;
+    }
+
+    sout_mux_sys_t *p_sys = malloc( sizeof( sout_mux_sys_t ) );
+    if( unlikely(p_sys == NULL) )
+        return VLC_ENOMEM;
+
+    p_mux->p_sys = p_sys;
+    p_sys->oc = avformat_alloc_context();
+    p_sys->oc->oformat = file_oformat;
+    /* If we use dummy access, let avformat write output */
     if( dummy )
         strcpy( p_sys->oc->filename, p_mux->p_access->psz_path );
 
@@ -134,7 +140,6 @@ int OpenMux( vlc_object_t *p_this )
     p_sys->b_write_keyframe = false;
     p_sys->b_error = false;
 
-    p_mux->p_sys = p_sys;
     /* Fill p_mux fields */
     p_mux->pf_control   = Control;
     p_mux->pf_addstream = AddStream;
@@ -309,7 +314,7 @@ static int MuxBlock( sout_mux_t *p_mux, sout_input_t *p_input )
     sout_mux_sys_t *p_sys = p_mux->p_sys;
     block_t *p_data = block_FifoGet( p_input->p_fifo );
     int i_stream = *((int *)p_input->p_sys);
-    AVStream *in_stream = p_sys->oc->streams[i_stream];
+    AVStream *p_stream = p_sys->oc->streams[i_stream];
     AVPacket pkt;
 
     memset( &pkt, 0, sizeof(AVPacket) );
@@ -332,17 +337,17 @@ static int MuxBlock( sout_mux_t *p_mux, sout_input_t *p_input )
     }
 
     if( p_data->i_pts > 0 )
-        pkt.pts = p_data->i_pts * in_stream->time_base.den /
-            CLOCK_FREQ / in_stream->time_base.num;
+        pkt.pts = p_data->i_pts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num;
     if( p_data->i_dts > 0 )
-        pkt.dts = p_data->i_dts * in_stream->time_base.den /
-            CLOCK_FREQ / in_stream->time_base.num;
+        pkt.dts = p_data->i_dts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num;
 
     /* this is another hack to prevent libavformat from triggering the "non monotone timestamps" check in avformat/utils.c */
-    in_stream->cur_dts = ( p_data->i_dts * in_stream->time_base.den /
-            CLOCK_FREQ / in_stream->time_base.num ) - 1;
+    p_stream->cur_dts = ( p_data->i_dts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num ) - 1;
 
-    if( av_write_frame( p_sys->oc, &pkt ) < 0 )
+   if( (av_write_frame( p_sys->oc, &pkt )) < 0 )
     {
         msg_Err( p_mux, "could not write frame (pts: %"PRId64", dts: %"PRId64") "
                  "(pkt pts: %"PRId64", dts: %"PRId64")",
@@ -353,7 +358,6 @@ static int MuxBlock( sout_mux_t *p_mux, sout_input_t *p_input )
 
     block_Release( p_data );
     return VLC_SUCCESS;
-
 }
 
 /*****************************************************************************
@@ -375,13 +379,7 @@ static int Mux( sout_mux_t *p_mux )
         if (psz_opts && *psz_opts)
             options = vlc_av_get_options(psz_opts);
         free(psz_opts);
-        //打开输出文件
-        if (!(p_sys->oc->oformat->flags & AVFMT_NOFILE)) {
-            if (avio_open(&p_sys->oc->pb, p_mux->p_access->psz_path, AVIO_FLAG_WRITE) < 0) {
-               msg_Err( p_mux,"Could not open output file '%s'", p_mux->p_access->psz_path);
-            }
-        }
-          error = avformat_write_header( p_sys->oc, NULL);
+        error = avformat_write_header( p_sys->oc, options ? &options : NULL);
         AVDictionaryEntry *t = NULL;
         while ((t = av_dict_get(options, "", t, AV_DICT_IGNORE_SUFFIX))) {
             msg_Err( p_mux, "Unknown option \"%s\"", t->key );
@@ -471,7 +469,7 @@ static int IOWrite( void *opaque, uint8_t *buf, int buf_size )
     }
 
     i_ret = sout_AccessOutWrite( p_mux->p_access, p_buf );
-    return i_ret ? i_ret : -1;
+    return i_ret /*? i_ret : -1*/;
 }
 
 static int64_t IOSeek( void *opaque, int64_t offset, int whence )

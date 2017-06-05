@@ -30,11 +30,13 @@
 #include <vlc_plugin.h>
 
 #include "avformat.h"
-#include "avcodec/avcommon.h"
+#include "avcommon.h"
 
+#define AV_OPTIONS_TEXT     "Advanced options"
+#define AV_OPTIONS_LONGTEXT "Advanced options, in the form {opt=val,opt2=val2}."
 vlc_module_begin ()
 #endif /* MERGE_FFMPEG */
-    add_shortcut( "ffmpeg", "avformat","ps", "mpeg1", "dvd","mpeg","ts")
+    add_shortcut( "ffmpeg", "avformat","ps", "mpeg1", "dvd","mpeg")
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_DEMUX )
     set_description( N_("My Avformat demuxer" ) )
@@ -51,7 +53,7 @@ vlc_module_begin ()
 #ifdef ENABLE_SOUT
     /* mux submodule */
     add_submodule ()
-    add_shortcut( "ffmpeg", "avformat","ps", "mpeg1", "dvd","ts")
+    add_shortcut( "ffmpeg", "avformat","ps", "mpeg1", "dvd")
     set_description( N_("My Avformat muxer" ) )
     set_capability( "sout mux", 160 )
     set_section( N_("Muxer"), NULL )

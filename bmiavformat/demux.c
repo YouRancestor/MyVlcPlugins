@@ -38,10 +38,10 @@
 #include <vlc_charset.h>
 #include <vlc_avcodec.h>
 
-#include "libavcodec/avcodec.h"
-#include "avcodec/chroma.h"
-#include "avcodec/avcommon_compat.h"
-#include "avcodec/avcommon.h"
+#include "avcodec.h"
+#include "chroma.h"
+#include "avcommon_compat.h"
+#include "avcommon.h"
 #include "avcodec.h"
 #include "avformat.h"
 #include "xiph.h"
@@ -54,7 +54,7 @@
       (LIBAVUTIL_VERSION_MICRO >= 100 && LIBAVUTIL_VERSION_INT >= AV_VERSION_INT( 52, 85, 100 ) )  )
 # if LIBAVFORMAT_VERSION_CHECK( 55, 18, 0, 40, 100)
 #  include <libavutil/display.h>
-#  define HAVE_AV_STREAM_GET_SIDE_DATA
+//#  define HAVE_AV_STREAM_GET_SIDE_DATA
 # endif
 #endif
 

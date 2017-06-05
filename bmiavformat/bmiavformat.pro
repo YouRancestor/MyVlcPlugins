@@ -35,14 +35,27 @@ HEADERS += avformat.h \
     avcommon.h \
     chroma.h \
     avcommon_compat.h
-INCLUDEPATH += /home/liwei/vlc-2.2.0/include/
-INCLUDEPATH += /home/liwei/vlc-2.2.0/
-INCLUDEPATH += /home/liwei/vlc-2.2.0/include/vlc/
-INCLUDEPATH += /home/liwei/vlc-2.2.0/modules/codec/
-INCLUDEPATH += /home/liwei/vlc-2.2.0/modules/demux/
+
+#Linux
+#INCLUDEPATH += /home/liwei/vlc-2.2.0/include/
+#INCLUDEPATH += /home/liwei/vlc-2.2.0/
+#INCLUDEPATH += /home/liwei/vlc-2.2.0/include/vlc/
+#INCLUDEPATH += /home/liwei/vlc-2.2.0/modules/codec/
+#INCLUDEPATH += /home/liwei/vlc-2.2.0/modules/demux/
+
+
+#Win
+INCLUDEPATH += E:\GitProject\vlc-2.2.4\include\
+INCLUDEPATH += E:\GitProject\vlc-2.2.4\modules\codec\
+
+INCLUDEPATH += E:\GitProject\vlc-2.2.4\modules\demux\
+INCLUDEPATH += E:\ffmpegSDK\ffmpeg-2.8.2\include\
+
 DEFINES += HAVE_LIBAVFORMAT_AVFORMAT_H HAVE_LIBAVCODEC_AVCODEC_H HAVE_LIBAVUTIL_AVUTIL_H
 
-LIBS += -lavutil -lavformat -lavcodec -lvlccore -lvlc
+
+LIBS += -L E:\ffmpegSDK\ffmpeg-2.8.2\lib  -lavformat  -lavutil   -lavcodec -lvlccore -lvlc
+
 
 unix {
     target.path = /usr/lib

@@ -24,7 +24,7 @@
 
 #ifndef AVCOMMON_COMPAT_H
 #define AVCOMMON_COMPAT_H 1
-
+//#define HAVE_LIBAVCODEC_AVCODEC_H
 #ifdef HAVE_LIBAVCODEC_AVCODEC_H
 #include <libavcodec/avcodec.h>
 
@@ -481,6 +481,7 @@ enum {
 
 #endif /* HAVE_LIBAVCODEC_AVCODEC_H */
 
+//#define HAVE_LIBAVUTIL_AVUTIL_H
 #ifdef HAVE_LIBAVUTIL_AVUTIL_H
 # include <libavutil/avutil.h>
 
@@ -505,7 +506,7 @@ enum {
 #endif
 
 #endif /* HAVE_LIBAVUTIL_AVUTIL_H */
-
+//#define HAVE_LIBAVFORMAT_AVFORMAT_H
 #ifdef HAVE_LIBAVFORMAT_AVFORMAT_H
 # include <libavformat/avformat.h>
 
