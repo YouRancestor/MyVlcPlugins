@@ -27,7 +27,7 @@ HEADERS += \
     dvbpsi_compat.h \
     bits.h
 
-LIBS += -lvlc -lvlccore -ldvbpsi
+LIBS += -lvlccore -ldvbpsi
 
 unix {
     target.path = /usr/lib

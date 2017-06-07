@@ -21,7 +21,7 @@ SOURCES += \
 HEADERS += \
     ps.h
 
-LIBS += -lvlc -lvlccore -ldvbpsi
+LIBS += -lvlccore -ldvbpsi
 
 unix {
     target.path = /usr/lib

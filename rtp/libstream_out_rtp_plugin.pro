@@ -9,7 +9,7 @@ INCLUDEPATH += E:\GitProject\vlc-2.2.4\include \
 
 DEFINES += HAVE_LLDIV HAVE_GETENV HAVE_SWAB HAVE_STRUCT_TIMESPEC HAVE_POLL HAVE_MAX_ALIGN_T MODULE_NAME=2_2_0b
 
-LIBS += -lvlc -lvlccore -lWs2_32
+LIBS += -lvlccore -lWs2_32
 
 HEADERS += \
     rtp.h
