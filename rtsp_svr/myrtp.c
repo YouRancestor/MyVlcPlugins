@@ -271,7 +271,7 @@ vlc_module_begin ()
     set_capability( "vod server", 200 )
     set_callbacks( OpenVoD, CloseVoD )
     add_shortcut( "rtsp" )
-    add_integer( "rtsp-timeout", 60, RTSP_TIMEOUT_TEXT,
+    add_integer( "rtsp-timeout", -1, RTSP_TIMEOUT_TEXT,
                  RTSP_TIMEOUT_LONGTEXT, true )
     add_string( "sout-rtsp-user", "",
                 RTSP_USER_TEXT, RTSP_USER_LONGTEXT, true )
@@ -1472,7 +1472,8 @@ static void* ThreadSend( void *data )
         if (out == NULL)
             continue;
 #else
-        mwait (out->i_dts + i_caching);
+        // this causes delay
+        // mwait (out->i_dts/* + i_caching*/);
         vlc_cleanup_pop ();
 #endif
 
